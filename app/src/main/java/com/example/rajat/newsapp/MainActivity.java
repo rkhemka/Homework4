@@ -1,110 +1,169 @@
-package com.example.rajat.newsapp;
+    package com.example.rajat.newsapp;
 
-import android.app.ProgressDialog;
-import android.content.Intent;
-import android.net.Uri;
-import android.os.AsyncTask;
-import android.os.Bundle;
-import android.provider.Settings;
-import android.support.v7.app.AppCompatActivity;
-import android.support.v7.widget.LinearLayoutManager;
-import android.support.v7.widget.RecyclerView;
-import android.support.v7.widget.Toolbar;
-import android.util.Log;
-import android.view.Menu;
-import android.view.MenuItem;
-import android.view.View;
-import android.widget.EditText;
-import android.widget.ProgressBar;
-import android.widget.TextView;
+    //import android.app.LoaderManager;
 
-import com.example.rajat.newsapp.utilites.NetworkUtils;
-
-import org.json.JSONException;
-
-import java.io.IOException;
-import java.net.URL;
-import java.util.ArrayList;
-import java.util.List;
+    import android.app.ProgressDialog;
+    import android.content.Intent;
+    import android.content.SharedPreferences;
+    import android.database.Cursor;
+    import android.database.sqlite.SQLiteDatabase;
+    import android.net.Uri;
+    import android.os.Bundle;
+    import android.preference.PreferenceManager;
+    import android.support.v4.app.LoaderManager;
+    import android.support.v4.content.AsyncTaskLoader;
+    import android.support.v4.content.Loader;
+    import android.support.v7.app.AppCompatActivity;
+    import android.support.v7.widget.LinearLayoutManager;
+    import android.support.v7.widget.RecyclerView;
+    import android.util.Log;
+    import android.view.Menu;
+    import android.view.MenuItem;
+    import android.view.View;
+    import android.widget.ProgressBar;
 
 
-public class MainActivity extends AppCompatActivity {
-    private ProgressDialog ProgressDialog;
+    import com.example.rajat.newsapp.Database.Contract;
+    import com.example.rajat.newsapp.Database.DBHelper;
+    import com.example.rajat.newsapp.Database.DatabaseUtils;
 
-    private RecyclerView RecyclerView;
-    private Adapter Adapter;
-    private ArrayList articlesList = new ArrayList<>();
+    import java.util.ArrayList;
 
-    @Override
-    protected void onCreate(Bundle savedInstanceState) {
-        super.onCreate(savedInstanceState);
-        setContentView(R.layout.activity_main);
+    // Replacing Asyn Task with Asyn Task Loader by implementing LoadManager
+    public class MainActivity extends AppCompatActivity implements LoaderManager.LoaderCallbacks<Void>, Adapter.NewsAdapterOnClickHandler {
+        private ProgressBar progressDialog;
 
+        // Initializing Loader
+        private static final int loaderID = 1;
 
-        RecyclerView = (RecyclerView) findViewById(R.id.recyclerView);
-        LinearLayoutManager layoutManager
-                = new LinearLayoutManager(this, LinearLayoutManager.VERTICAL, false);
-        RecyclerView.setLayoutManager(layoutManager);
-        RecyclerView.setHasFixedSize(true);
-        Adapter = new Adapter(this);
-        RecyclerView.setAdapter(Adapter);
+        static final String TAG = "mainactivity";
+        // Creating object for cursor and SQLiteDatabase
+        private Cursor cursor;
+        private SQLiteDatabase db;
 
-
-        new GetResponseTask().execute(NetworkUtils.makeURL());
-    }
-
-
-    private class GetResponseTask extends AsyncTask<URL, Void, ArrayList<NewsItem>> {
+        private RecyclerView RecyclerView;
+        private Adapter Adapter;
+        // Removed Arraylist Object as we are storing all values in database
+        //    private ArrayList articlesList = new ArrayList<>();
 
         @Override
-        protected void onPreExecute() {
-            super.onPreExecute();
-            ProgressDialog = new ProgressDialog(MainActivity.this);
-            ProgressDialog.setMessage("Loading data...");
-            ProgressDialog.setIndeterminate(false);
-            ProgressDialog.show();
-        }
+        protected void onCreate(Bundle savedInstanceState) {
+            super.onCreate(savedInstanceState);
+            setContentView(R.layout.activity_main);
+            progressDialog = (ProgressBar) findViewById(R.id.progressBar);
 
-        @Override
-        protected ArrayList<NewsItem> doInBackground(URL... params) {
-            String jsonResults;
-            ArrayList<NewsItem> results = null;
-            try {
-                jsonResults = NetworkUtils.getResponseFromHttpUrl(params[0]);
-                results = NetworkUtils.parseJSON(jsonResults);
-            } catch (IOException e) {
-                e.printStackTrace();
-            } catch (JSONException e) {
-                e.printStackTrace();
+            RecyclerView = (RecyclerView) findViewById(R.id.recyclerView);
+
+            LinearLayoutManager layoutManager
+                    = new LinearLayoutManager(this, LinearLayoutManager.VERTICAL, false);
+            RecyclerView.setLayoutManager(layoutManager);
+
+            //RecyclerView.setHasFixedSize(true);
+
+
+            SharedPreferences prefs = PreferenceManager.getDefaultSharedPreferences(this);
+            boolean isFirst = prefs.getBoolean("isfirst", true);
+            // onCreate, have your activity load what's currently in your database into the recyclerview for display
+            if (isFirst) {
+                load();
+                SharedPreferences.Editor editor = prefs.edit();
+                editor.putBoolean("isfirst", false);
+                editor.commit();
             }
-            return results;
+            ScheduleUtilities.scheduleRefresh(this);
+
+
+        }
+
+        public void load() {
+            LoaderManager loaderManager = getSupportLoaderManager();
+            loaderManager.restartLoader(loaderID, null, this).forceLoad();
+
         }
 
         @Override
-        protected void onPostExecute(final ArrayList<NewsItem> data) {
-
-            if(data != null)
-                Adapter.setNewsData(data);
-
-            ProgressDialog.dismiss();
+        protected void onStart() {
+            super.onStart();
+            db = new DBHelper(MainActivity.this).getReadableDatabase();
+            cursor = DatabaseUtils.getAll(db);
+            Adapter = new Adapter(cursor, this);
+            RecyclerView.setAdapter(Adapter);
         }
-    }
 
-    @Override
-    public boolean onCreateOptionsMenu(Menu menu) {
-        getMenuInflater().inflate(R.menu.menu, menu);
-        return true;
-    }
+        @Override
+        protected void onStop() {
+            super.onStop();
+            db.close();
+            cursor.close();
+        }
 
-    @Override
-    public boolean onOptionsItemSelected(MenuItem item) {
 
-        int id = item.getItemId();
-        if (id == R.id.search) {
-            new GetResponseTask().execute(NetworkUtils.makeURL());
+        @Override
+        public boolean onCreateOptionsMenu(Menu menu) {
+            getMenuInflater().inflate(R.menu.menu, menu);
             return true;
         }
 
-        return super.onOptionsItemSelected(item);
+        @Override
+        public boolean onOptionsItemSelected(MenuItem item) {
+
+            int id = item.getItemId();
+            if (id == R.id.search) {
+                load();
+            }
+
+            return true;
+        }
+
+        // Implementing Loader
+        @Override
+        public Loader<Void> onCreateLoader(int id, final Bundle args) {
+            return new AsyncTaskLoader<Void>(this) {
+
+
+                @Override
+                protected void onStartLoading() {
+                    super.onStartLoading();
+                    progressDialog.setVisibility(View.VISIBLE);
+
+
+                }
+
+                @Override
+                public Void loadInBackground() {
+                    RefreshTasks.refreshArticles(MainActivity.this);
+                    return null;
+                }
+
+            };
+
+        }
+
+        @Override
+        public void onLoadFinished(android.support.v4.content.Loader<Void> loader, Void data) {
+
+            progressDialog.setVisibility(View.GONE);
+            db = new DBHelper(MainActivity.this).getReadableDatabase();
+            cursor = DatabaseUtils.getAll(db);
+            Adapter = new Adapter(cursor, this);
+            RecyclerView.setAdapter(Adapter);
+            Adapter.notifyDataSetChanged();
+        }
+
+        @Override
+        public void onLoaderReset(android.support.v4.content.Loader<Void> loader) {
+
+        }
+
+        // Onclick method responding to users clicks
+        @Override
+        public void onItemClick(Cursor cursor, int clickedItemIndex) {
+            cursor.moveToPosition(clickedItemIndex);
+            String url = cursor.getString(cursor.getColumnIndex(Contract.TABLE_NewsItem.COLUMN_NAME_URL));
+            Log.d(TAG, String.format("Url %s", url));
+
+            Intent intent = new Intent(Intent.ACTION_VIEW);
+            intent.setData(Uri.parse(url));
+            startActivity(intent);
+        }
     }
-}
